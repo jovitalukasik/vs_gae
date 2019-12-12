@@ -23,4 +23,4 @@ Reference
 For more information, see the paper
 
 
-D.Friede, J.Lukasik, H.Stuckenschmidt, M.Keuper, A Variational-Sequential Graph Autoencoder for Neural Architecture Performance Prediction
+D.Friede, J.Lukasik, H.Stuckenschmidt, M.Keuper. A Variational-Sequential Graph Autoencoder for Neural Architecture Performance Prediction. *arXiv preprint arXiv: 1912.05317*, 2019
