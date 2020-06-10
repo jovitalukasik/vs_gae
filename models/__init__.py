@@ -1,7 +1,4 @@
-from models.GNNenc import GNNEncoder
-from models.GNNdec import GNNDecoder
-from models.GNNvae import GNNVAE
-from models.GNNprediction import GNNpred
+from models.GNN import GNNEncoder, GNNDecoder, GNNpred, GNNVAE
 
 __all__ = [
     'GNNEncoder',

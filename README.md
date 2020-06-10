@@ -9,14 +9,23 @@ In computer vision research, the process of automating architecture engineering,
 
 Example
 ------------
-The NAS-Bench-101 dataset is split to 70%/20%/10% randomly into training-,test- and validation set and can be found in data.zip.
+The NAS-Bench-101 dataset is split into 70%/20%/10% training-,test- and validation set and can be found in enc_data.zip.
 To train the encoder and the performance prediction for the whole trainings dataset for 100 epochs run
 
-  `python enc_perf_prediction.py --method random --training_size 100 --epoch 100`
+  `python enc_perf_prediction.py`
   
- The resulting predicted accuracies for the validation and the training set are written into the directory `save_acc/random`.
- The validation losses and training losses are written into the directory `result/random`.
- 
+To train the encoder and the performance prediction for 10% equidistant sampled run
+
+   `python enc_perf_prediction.py --training_size 10 --sampling 'even'`
+   
+The data for the extrapolation task (extrapolate to 6/extrapolate to 7) can be found in extra_6.zip/extra_7.zip. 
+    
+To train the variational autoencoder for 90% of the dataset (vae_data.zip) for 300 epochs and test the autoencoder abilities run
+
+   `python train_gae.py --test`
+
+
+Save all datasets in the folder "data/". 
 
 Reference
 ---------

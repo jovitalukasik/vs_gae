@@ -1,206 +1,266 @@
-import os
-
 import logging
 logging.basicConfig(format="%(asctime)s %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+import pdb
 import numpy as np
-import h5py
-from time import time
-
+import time 
+import json
+import os
+import sys
 import torch
-import torch.nn as nn
+# import torch.nn as nn
 from torch_geometric.data import Data, DataLoader
 
-import mlflow as mlf
+from models import GNNpred
 
-from models.GNNenc import NodeEmb, GraphEmb, GetAcc
-from models.GNNprediction import GNNpred
-
-from utils import sample_random, sample_edit, sample_even, fetch_data, my_round
+from utils import utils
+from utils import sample_random, sample_edit, sample_even
 
 
 import argparse
-parser = argparse.ArgumentParser(description='doublin')
-parser.add_argument('--method', type=str, help='randomly sampled NAS-Bench 101 Dataset', default='')
-parser.add_argument('--data', type=str, help='training data', default='')
-parser.add_argument('--training_size', type=int, help='size of training data to downsize from 1% to 100%', default='')
-parser.add_argument('--epoch', type=str, help='training data', default=100)
+parser = argparse.ArgumentParser(description='GNN PerformancePrediciton')
+parser.add_argument('--prediction_task', choices=['interpolation', 'extrapolation'], default='interpolation', help='predicition in which areas')
+parser.add_argument('--save_interval', type=int, default=50, help='how many epochs to wait to save model')
+parser.add_argument('--sampling', type=str, default='random', help='randomly (even/edit) sampled NAS-Bench 101 Dataset')
+parser.add_argument('--train_data', type=str, help='training data in ../data', default='data/training_data_70.pth')
+parser.add_argument('--validation_data', type=str, help='training data in ../data', default='data/validation_data_10.pth')
+parser.add_argument('--test_data', type=str, help='training data in ../data', default='data/test_data_20.pth')
+parser.add_argument('--training_size', type=int, help='size of training data to downsize from 1% to 100%', default='100')
+parser.add_argument('--batch_size', type=int, default=128, help='batch size')
+parser.add_argument('--epochs', type=int,  default=100)
+parser.add_argument('--num_acc_layers', type=int, help='amount linear layer for regression', default=4)
+parser.add_argument('--learning_rate', type=float, default=0.00001)
 args=parser.parse_args()
 
+args.save = 'experiments/performance_prediction/gnn/{}/{}/sampled-{}/pred-{}'.format(
+    args.prediction_task,
+    args.sampling,
+    args.training_size,
+    time.strftime(
+        "%Y%m%d-%H%M%S"))
+utils.create_exp_dir(args.save)
+
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
+log_format = '%(asctime)s %(message)s'
+logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+                    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+fh = logging.FileHandler(os.path.join(args.save, 'log.txt'))
+fh.setFormatter(logging.Formatter(log_format))
+logging.getLogger().addHandler(fh)
 
 
 sampling_methods = {
-    'random': (sample_random, 'data/training_70_dict.pth'),
+    'random': (sample_random),
+    'edit': (sample_edit), 
+    'even': (sample_even)
 }
-method=args.method
-path_results = "result/"+method
-path_saved_acc = "save_acc/"+method
 
 
 
-try:
-    os.makedirs(path_results)
-    print('Successfully created the directory %s ' % path_results)
-    os.makedirs(path_saved_acc)
-    print('Successfully created the directory %s ' % path_saved_acc)
-except FileExistsError:
-    print('Directory already exists %s ' % path_results)
-    print('Directory already exists %s ' % path_saved_acc)
-
-
-def main(inp, method,training_size, epoch):
+def main(args):
     
-    sample_func, data = sampling_methods[method]
-    
-    if data[-4:] == '.pth':
-        data = torch.load(data)
-    
+    method = args.sampling
+    training_size = args.training_size
+    sample_func= sampling_methods[method] 
 
-    device = torch.device('cpu')
-    batch_size = 128
-    budget = epoch
+    
+    device = torch.device('cuda')
+    batch_size = args.batch_size 
+    budget = args.epochs
+    
+    logging.info("args = %s", args)
 
+    with open('model_configs/gnn_config.json')  as json_file:
+             config = json.load(json_file)
 
 
     config = {
-        'ndim': 250,
-        'sdim': 56,
-        'num_gnn_layers': 2,
+        'num_gnn_layers': config['num_gnn_layers'],
+        "dropout_prob": config['dropout_prob'],
+        "gnn_hidden_dimensions":config['gnn_hidden_dimensions'],
+        'gnn_node_dimensions': config['gnn_node_dimensions'],
         'g_aggr': 'gsum',
-        'num_acc_layers': 4,
-        'lr': 0.00001,
+        'lr': args.learning_rate,
+        'num_acc_layers': args.num_acc_layers, 
+        'num_node_atts':5, 
+        'dim_target':1,
+        'batch_size':batch_size,
+        'epochs': budget, 
+        'training_size':training_size, 
+        'sampling_method':method
     }
-
-
-    t0 = time()  
-    test_dataset = fetch_data('data/test_data_20.pth')
-    logging.info('Loaded test graphs in {} sec.'.format(round(time()-t0, 2)))
-    t0 = time()
-    val_dataset = fetch_data('data/validation_data_10.pth')
-    logging.info('Loaded validation graphs model in {} sec.'.format(round(time()-t0, 2)))
     
-    test_loader = DataLoader(test_dataset, batch_size=2048, shuffle=False)
-    val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False)
-
+    with open(os.path.join(args.save, 'config.json'), 'w') as fp:
+        json.dump(config, fp)
+        
+    logging.info("architecture configs = %s", config)
+    
     criterion = nn.MSELoss()
-    
-    for num in [training_size]:
-        ratio = np.round(num/100, 2) 
-        run_name = '{}{}'.format(method, num)
 
+
+    model = GNNpred(config['gnn_node_dimensions'], config['gnn_hidden_dimensions'], config['dim_target'],
+                    config['num_gnn_layers'], config['num_acc_layers'], config['num_node_atts'], config['beta'], 
+                            model_config=config).to(device)
+       
+    if args.prediction_task=='interpolation':
+        #Load Test Data
+        test_data=args.test_data
+        t0 = time.time()  
+        test_dataset = torch.load(test_data)
+        test_loader = DataLoader(test_dataset, batch_size=2048, shuffle=False)
+
+        logging.info('Loaded test graphs in {} sec.'.format(round(time.time()-t0, 2)))
+    
+  
+    #Load Validation Data
+    validation_data=args.validation_data
+    t0 = time.time()
+
+    val_dataset = torch.load(validation_data)
+    val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False)      
+
+       
+    logging.info('Loaded validation graphs model in {} sec.'.format(round(time.time()-t0, 2)))
+    ratio = np.round(training_size/100, 2) 
+    
+    
+        
+    logger.info('sampling')
+    #Load Training data
+    train_data=args.train_data
+    sampled_dataset = sample_func(ratio, torch.load(train_data))
+    train_loader = DataLoader(sampled_dataset, batch_size=batch_size, shuffle=True)
+
+    logger.info('start training {}_{} with {}% ({} graphs) '.format(args.encoder_type, args.predictor, training_size, len(sampled_dataset)))
+    
+    # Save Sampled Dataset
+    filepath = os.path.join(args.save, 'sampled_dataset_{}.pth'.format(training_size))
+    torch.save(sampled_dataset, filepath)
+
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=config['lr']) 
+    
+    for epoch in range(1, int(budget)+1):
+        logging.info('epoch: %s', epoch)
+       
+        # training
+        train_obj, train_results=train(train_loader, model, criterion, optimizer, config['lr'], epoch, device, 
+                                       alpha, batch_size)
+        logging.info('train metrics:  %s', train_results)
+
+#       validation    
+        valid_obj, valid_results = infer(val_loader, model, criterion, epoch, device, alpha, batch_size)
+        logging.info('validation metrics:  %s', valid_results)
+        
+        if args.prediction_task=='interpolation':
+    #       testing
+            test_obj, test_results= test(test_loader, model, criterion, device, batch_size)
+            logging.info('test metrics:  %s', test_results)
+            config_dict = {
+                'epochs': args.epochs,
+                'loss': train_results["rmse"],
+                'val_rmse': valid_results['rmse'],
+                'test_rmse': test_results['rmse'],
+                'test_mse': test_results['mse']
+                }
+
+        # Save the entire model
+        if epoch % args.save_interval == 0:
+            logger.info('save model checkpoint {}  '.format(epoch))
+            filepath = os.path.join(args.save, 'model_{}.obj'.format(epoch))
+            torch.save(model.state_dict(), filepath)
         
 
-        rmse_list = list()
-        all_loss = list()
-        best_rmse_list=[]
-        for step in range(5):
-
-            logger.info('sampling')
-            sampled_dataset = sample_func(ratio, data)
-            train_loader = DataLoader(sampled_dataset, batch_size=batch_size, shuffle=True)
-            logger.info('start run {}_{} with {}% ({} graphs) '.format(run_name, step+1, num, len(sampled_dataset)))
+        with open(os.path.join(args.save, 'results.txt'), 'w') as file:
+                json.dump(str(config_dict), file)
+                file.write('\n')
 
 
-            model = GNNpred(config['ndim'], config['sdim']).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
 
-            best_val = np.inf
-            best_test = np.inf
-            for epoch in range(int(budget)):
-                loss = 0
-                model.train()
-                running_loss = torch.Tensor().to(device)
-                for i, graph_batch in enumerate(train_loader):
-                    graph_batch = graph_batch.to(device)
-                    optimizer.zero_grad()
-                    output = model(graph_batch.edge_index,
-                                   graph_batch.node_atts,
-                                   graph_batch.batch.to(device))
-                    loss = criterion(output.view(-1), graph_batch.acc)
-                    running_loss = torch.cat([running_loss, loss.view(-1)])
-                    loss.backward()
-                    optimizer.step()
-                loss = torch.sqrt(torch.mean(running_loss)).item()
-                all_loss.append(loss)
 
-                logger.info('epoch {}:\tloss = {}'.format(epoch, my_round(loss, 4)))
+def train(train_loader,model, criterion, optimizer, lr, epoch, device, alpha, batch_size):
+    objs = utils.AvgrageMeter()
+    
+    # TRAINING
+    preds = []
+    targets = []
+        
+    model.train()
+
+    for step, graph_batch in enumerate(train_loader):
+        graph_batch = graph_batch.to(device)
+        pred = model(graph_batch=graph_batch).view(-1)
+        loss = criterion(pred, (graph_batch.acc))
+
+        preds.extend((pred.detach().cpu().numpy()))
+        targets.extend(graph_batch.acc.detach().cpu().numpy())
             
-                val_rmse, _ ,val_acc= evaluate(model, val_loader, device)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        n = graph_batch.num_graphs
+        objs.update(loss.data.item(), n)
+    
+#     logging.info('train %03d %.5f', step, objs.avg)
 
-                logger.info('epoch {}:\tval_rmse = {}'.format(epoch, my_round(val_rmse, 4)))
-
-                test_rmse, test_mae ,_= evaluate(model, test_loader, device)
-
-                logger.info('epoch {}:\ttest_rmse = {}'.format(epoch, my_round(test_rmse, 4)))
-                logger.info('epoch {}:\ttest_mae = {}'.format(epoch, my_round(test_mae, 4)))
-                
-                            
-                if val_rmse < best_val:
-                    best_val = val_rmse
-                    best_test = test_rmse
-#                         save(model, run_name)
-                rmse_list.append(best_val)
-            best_rmse_list.append(best_val)
-            logger.info('step {}:\tbest_test = {}'.format(step+1, my_round(best_test, 4)))
-            
-            torch.save(rmse_list, path_results+'/{}_all_rmse.pth'.format(run_name))
-            logger.info('Saved all validation rmse to {}'.format(path_results))
-                        
-            torch.save(best_rmse_list, path_results+'/{}_best_rmse.pth'.format(run_name))
-            logger.info('Saved best validation rmse of each run to {}'.format(path_results))
-            
-            torch.save(all_loss, path_results+'/{}_loss.pth'.format(run_name))
-            logger.info('Saved trainings loss to {}'.format(path_results))
-            
-            torch.save(val_acc, path_saved_acc+'/{}_val_acc.pth'.format(run_name))
-            logger.info('Saved true and predicted accuracy of validation set to {}'.format(path_saved_acc))
-            
-            _, _ ,train_acc= evaluate(model, train_loader, device)
-            torch.save(train_acc, path_saved_acc+'/{}_train_acc.pth'.format(run_name))
-            logger.info('Saved true and predicted accuracy of training set to {}'.format(path_saved_acc))
-            
-            
-            logger.info('epoch {}:\ttest_rmse = {}'.format(epoch, my_round(test_rmse, 4)))
+    train_results = utils.evaluate_metrics(np.array(targets), np.array(preds), prediction_is_first_arg=False)
+    
+    return objs.avg, train_results
 
 
-    return loss, val_rmse,test_rmse,test_mae, model.number_of_parameters()
+def infer(val_loader, model, criterion, epoch, device, alpha, batch_size):
+    objs = utils.AvgrageMeter()
 
+    # VALIDATION
+    preds = []
+    targets = []
 
-
-def evaluate(model, data_loader, device):
-    criterion = nn.MSELoss(reduction='none')
     model.eval()
-    data_acc=torch.Tensor().to(device)
-    pred_acc=torch.Tensor().to(device)
-    test_loss = torch.Tensor().to(device)
-    for graph_batch in data_loader:
-        graph_batch.to(device)
-        data_acc=torch.cat([data_acc, graph_batch.acc])
-        with torch.no_grad():
-            out = model(graph_batch.edge_index,
-                        graph_batch.node_atts,
-                        graph_batch.batch.to(device))  
-        pred_acc=torch.cat([pred_acc, out.view(-1)])
-        loss = criterion(out.view(-1), graph_batch.acc)
-        test_loss = torch.cat([test_loss, loss])
-    acc=torch.stack([data_acc,pred_acc])
-    rmse = torch.sqrt(torch.mean(test_loss)).item()
-    mae = torch.mean(torch.sqrt(test_loss)).item()
-    return rmse, mae, acc
+        
+    for step, graph_batch in enumerate(val_loader):
+        graph_batch = graph_batch.to(device)
+        pred = model(graph_batch=graph_batch).view(-1)
+        loss = criterion(pred, (graph_batch.acc))
+
+        preds.extend((pred.detach().cpu().numpy()))
+        targets.extend(graph_batch.acc.detach().cpu().numpy())
+        n = graph_batch.num_graphs
+        objs.update(loss.data.item(), n)
+
+#     logging.info('valid %03d %.5f', step, objs.avg)
+
+    val_results = utils.evaluate_metrics(np.array(targets), np.array(preds), prediction_is_first_arg=False)
+
+    return objs.avg, val_results
 
 
+def test(test_loader, model, criterion, device, batch_size):
+    objs = utils.AvgrageMeter()
+    preds = []
+    targets = []
+    
+    model.eval()
+     
+    for step, graph_batch in enumerate(test_loader):
+        graph_batch = graph_batch.to(device)
+        pred = model(graph_batch=graph_batch).view(-1)
+        loss = criterion(pred, (graph_batch.acc))
 
+        preds.extend((pred.detach().cpu().numpy()))
+        targets.extend(graph_batch.acc.detach().cpu().numpy())
+        n = graph_batch.num_graphs
+        objs.update(loss.data.item(), n)
 
+    test_results = utils.evaluate_metrics(np.array(targets), np.array(preds), prediction_is_first_arg=False)
+#     logging.info('test metrics %s', test_results)
 
+    return objs.avg, test_results
 
-
-def save(model, name):
-    torch.save(model.state_dict(), 'saved_models/{}/' + name)
-
-   
+ 
 
     
 if __name__ == '__main__':
-    main(args.data, args.method, args.training_size, args.epoch)
+    main(args)
     

@@ -3,8 +3,8 @@ import h5py
 import numpy as np
 from numpy.random import shuffle as shffle
 from torch_geometric.data import Data, DataLoader
-
-
+import pdb
+from torch_geometric.utils import to_dense_adj
 
 def edges2index(edges, finish=False):
     device = edges.device
@@ -80,53 +80,110 @@ def get_edge_list_list(edge_list_sorted, max_num_nodes):
 
 def prep_data(data_path, max_num_nodes=None, training=False, aggr='sum', device='cpu'):
     if data_path[-4:] == '.pth':
-        return torch.load(data_path)    
-    f = h5py.File(data_path, 'r')    
-    device = torch.device(device)
-    data_list = list()
-    for graph in f.values():
         if not training:
-            edge_list = graph['edgelist'].value
-            node_atts = graph['node_attr'].value + 2
-            acc = graph['val_acc'].value
-            num_nodes = node_atts.size
-            data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
-                    num_nodes=num_nodes,
-                    node_atts=torch.LongTensor(node_atts).to(device),
-                    acc = torch.tensor([acc]).to(device),
-                   )
-            data_list.append(data)
-            continue
-            
-        else: 
-            edges, edge_list = get_edges(graph['edgelist'].value, max_num_nodes)
-            edge_list_list = get_edge_list_list(edge_list, max_num_nodes)
-            node_atts = graph['node_attr'].value + 2
-            num_nodes = node_atts.size
-            node_atts_padded = np.ones(max_num_nodes, dtype=np.int32)
-            node_atts_padded[:num_nodes-1] = node_atts[1:]
-            nodes = np.zeros(max_num_nodes-1, dtype=np.float32)
-            nodes[:num_nodes-1] = 1
-            if aggr == 'mean':
-                nodes /= num_nodes
-            acc = graph['val_acc'].value
-            data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
+            return torch.load(data_path) 
+        else:
+            device = torch.device(device)
+            data_list = list()
+            data=torch.load(data_path)
+            for graph in data:
+                edges, edge_list =get_edges(graph.edge_index.numpy().transpose(),max_num_nodes)
+                edge_list_list = get_edge_list_list(edge_list, max_num_nodes)
+                node_atts=graph.node_atts.numpy()
+                num_nodes = node_atts.size
+                node_atts_padded = np.ones(max_num_nodes, dtype=np.int32)
+                node_atts_padded[:num_nodes-1] = node_atts[1:]
+                nodes = np.zeros(max_num_nodes-1, dtype=np.float32)
+                nodes[:num_nodes-1] = 1
+                if aggr == 'mean':
+                    nodes /= num_nodes
+                acc = graph.acc.numpy().item()
+#                 test_acc=graph.test_acc.numpy().item()
+#                 training_time=graph.training_time.numpy().item()
+                data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
+                            num_nodes=num_nodes,
+                            node_atts=torch.LongTensor(node_atts).to(device),
+                            acc = torch.tensor([acc]).to(device),
+#                             test_acc=torch.tensor([test_acc]).to(device),
+#                             training_time=torch.tensor([training_time]).to(device),
+                            nodes=torch.tensor(nodes).unsqueeze(0).to(device),
+                           )
+
+                data_full = [data]
+                for idx in range(max_num_nodes-1):
+                    num_nodes = idx + 2
+                    data = Data(edge_index=torch.LongTensor(np.transpose(edge_list_list[idx])).to(device),
+                            num_nodes=num_nodes,
+                            node_atts=torch.LongTensor([node_atts_padded[idx]]).to(device),
+                            edges=torch.tensor(edges[gauss(num_nodes-2):gauss(num_nodes-1)]).unsqueeze(0).to(device)
+                           )
+                    data_full.append(data)
+                data_list.append(tuple(data_full))   
+    else:            
+        f = h5py.File(data_path, 'r')    
+        device = torch.device(device)
+        data_list = list()
+        for graph in f.values():
+            if not training:
+                edge_list = graph['edgelist'][()]
+                node_atts = graph['node_attr'][()] + 2
+                acc = graph['val_acc'][()]
+                test_acc=graph['test_acc'][()]
+                training_time=graph['training_time'][()]
+                num_nodes = node_atts.size
+                try:
+                    edit=graph['edit_dist'][()]
+                    data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
                         num_nodes=num_nodes,
                         node_atts=torch.LongTensor(node_atts).to(device),
                         acc = torch.tensor([acc]).to(device),
-                        nodes=torch.tensor(nodes).unsqueeze(0).to(device),
+                        test_acc=torch.tensor([test_acc]).to(device),
+                        training_time=torch.tensor([training_time]).to(device),
+                        edit=torch.tensor([edit]).to(device),
                        )
-
-            data_full = [data]
-            for idx in range(max_num_nodes-1):
-                num_nodes = idx + 2
-                data = Data(edge_index=torch.LongTensor(np.transpose(edge_list_list[idx])).to(device),
+                except:
+                    data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
                         num_nodes=num_nodes,
-                        node_atts=torch.LongTensor([node_atts_padded[idx]]).to(device),
-                        edges=torch.tensor(edges[gauss(num_nodes-2):gauss(num_nodes-1)]).unsqueeze(0).to(device)
+                        node_atts=torch.LongTensor(node_atts).to(device),
+                        acc = torch.tensor([acc]).to(device),
+                        test_acc=torch.tensor([test_acc]).to(device),
+                        training_time=torch.tensor([training_time]).to(device),
                        )
-                data_full.append(data)
-            data_list.append(tuple(data_full))
+                data_list.append(data)
+                continue
+            else: 
+                edges, edge_list = get_edges(graph['edgelist'][()], max_num_nodes)
+                edge_list_list = get_edge_list_list(edge_list, max_num_nodes)
+                node_atts = graph['node_attr'][()] + 2
+                num_nodes = node_atts.size
+                node_atts_padded = np.ones(max_num_nodes, dtype=np.int32)
+                node_atts_padded[:num_nodes-1] = node_atts[1:]
+                nodes = np.zeros(max_num_nodes-1, dtype=np.float32)
+                nodes[:num_nodes-1] = 1
+                if aggr == 'mean':
+                    nodes /= num_nodes
+                acc = graph['val_acc'][()]
+                test_acc=graph['test_acc'][()]
+                training_time=graph['training_time'][()]
+                data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
+                            num_nodes=num_nodes,
+                            node_atts=torch.LongTensor(node_atts).to(device),
+                            acc = torch.tensor([acc]).to(device),
+                            test_acc=torch.tensor([test_acc]).to(device),
+                            training_time=torch.tensor([training_time]).to(device),
+                            nodes=torch.tensor(nodes).unsqueeze(0).to(device),
+                           )
+
+                data_full = [data]
+                for idx in range(max_num_nodes-1):
+                    num_nodes = idx + 2
+                    data = Data(edge_index=torch.LongTensor(np.transpose(edge_list_list[idx])).to(device),
+                            num_nodes=num_nodes,
+                            node_atts=torch.LongTensor([node_atts_padded[idx]]).to(device),
+                            edges=torch.tensor(edges[gauss(num_nodes-2):gauss(num_nodes-1)]).unsqueeze(0).to(device)
+                           )
+                    data_full.append(data)
+                data_list.append(tuple(data_full))
     return data_list
 
 
@@ -146,6 +203,9 @@ def DecLoader(data, batch_size, shuffle=True, device='cuda'):
         data = data[batch_size:]
         yield batch_list
 
+
+
+        
         
         
 def fetch_data(data_name):
@@ -165,15 +225,28 @@ def fetch_data(data_name):
         val_acc = graph['val_acc'].value
         num_nodes = node_attr.size
         data = Data(
-                edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
-                num_nodes=num_nodes,
-                node_atts=torch.LongTensor(node_attr).to(device),
-                acc = torch.tensor([val_acc]).to(device)
-        )
+                    edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
+                    num_nodes=num_nodes,
+                    node_atts=torch.LongTensor(node_attr).to(device),
+                    acc = torch.tensor([val_acc]).to(device)
+            )
         graph_list.append(data)
         
     return graph_list
 
+def data_to_longtensor(dataset):    
+    data_list=[]
+    for graph in dataset:
+        data = Data(edge_index=torch.LongTensor(graph.edge_index),
+    #             edit=torch.tensor([graph.edit]),
+                node_atts=torch.LongTensor(graph.node_atts),
+                num_nodes = graph.node_atts.size(0),
+                acc = torch.tensor([graph.acc]),
+#                 test_acc=torch.tensor([graph.test_acc]),
+#                 training_time=torch.tensor([graph.training_time])
+                   )  
+        data_list.append(data)    
+    return data_list
 
 
 def my_round(data, dec=2):
@@ -184,3 +257,6 @@ def my_round(data, dec=2):
             if isinstance(value, float):
                 data[key] = np.round(value, dec)
     return data
+
+
+        

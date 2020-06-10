@@ -7,8 +7,14 @@ from collections import defaultdict
 from torch_geometric.data import Data, DataLoader
 
 
-
-def sample_random(ratio, graph_dict): 
+def sample_random(ratio, graphs): 
+    graph_dict = defaultdict(set)
+    for graph in graphs:
+        try:
+            n=graph.node_atts.numpy().size
+        except:    
+            n=graph[0].node_atts.numpy().size
+        graph_dict[n].add(graph) 
     sampled_list = list()
     for graph_list in graph_dict.values():
         graph_list = list(graph_list)
@@ -19,13 +25,14 @@ def sample_random(ratio, graph_dict):
     return sampled_list
 
 
-
-def hdf5_to_dict(hdf5_file):
+def graphs_to_dict(graphs):
     trainings_dict = defaultdict(set)
-    h=h5py.File(hdf5_file,'r')
-    for graph in h.values():
-        e=graph['edit_dist'].value
-        trainings_dict[e].add(graph) 
+    for graph in graphs:
+            try:
+                e=graph.edit.numpy().item()
+            except:  
+                e=graph[0].edit.numpy().item()
+            trainings_dict[e].add(graph)        
     return trainings_dict
 
 
@@ -43,22 +50,13 @@ def training_edit_subsampling(share, trainings_dict):
                 break
     return subsampling_set
 
-def sample_edit(ratio, file_path):
-    data_dict = hdf5_to_dict(file_path)
+def sample_edit(ratio, graph_data):
+    data_dict = graphs_to_dict(graph_data)
     sampled_dict = training_edit_subsampling(ratio, data_dict)
     graph_list = list()
     for graphs in sampled_dict.values():
-        device = 'cpu'
         for graph in graphs:
-            edge_list = graph['edgelist'].value
-            node_atts = graph['node_attr'].value + 2
-            acc = graph['val_acc'].value
-            num_nodes = node_atts.size
-            data = Data(edge_index=torch.LongTensor(np.transpose(edge_list)).to(device),
-                    num_nodes=num_nodes,
-                    node_atts=torch.LongTensor(node_atts).to(device),
-                    acc = torch.tensor([acc]).to(device))
-            graph_list.append(data)
+            graph_list.append(graph)
     return graph_list
 
 
@@ -109,14 +107,15 @@ def closest_node(node, nodes):
 def sample_even(ratio, graphs):
     r = int(np.round(100*ratio))
 
-    needed_buckets = torch.load('data/latent_space/needed_buckets.pth')
+    needed_buckets = torch.load('data/even_sampling/needed_buckets.pth')
     num_buckets = needed_buckets[r]
 
-    X_sorted_dim, X_min, X_max = torch.load('data/latent_space/X_sorted_dim.pth')
+    X_sorted_dim, X_min, X_max = torch.load('data/even_sampling/X_sorted_dim.pth')
     X_buckets, centers = sort_in_bins(X_sorted_dim, X_min, X_max, num_buckets=num_buckets)
     bucket_dict = get_bucket_dict(X_buckets)
 
-    X = torch.load('data/latent_space/training_70_d4.pth')
+    X = torch.load('data/even_sampling/training_70_d4.pth')
+
 
     num_nodes = X.shape[0]
     size = int(np.round(ratio*num_nodes))
