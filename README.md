@@ -14,7 +14,7 @@ To train the encoder and the performance prediction for the whole trainings data
 
   `python enc_perf_prediction.py`
   
-To train the encoder and the performance prediction for 10% equidistant sampled run
+To train the encoder and the performance prediction for 10% equidistant sampled data run
 
    `python enc_perf_prediction.py --training_size 10 --sampling 'even'`
    
@@ -24,8 +24,7 @@ To train the variational autoencoder for 90% of the dataset (vae_data.zip) for 3
 
    `python train_gae.py --test`
 
-
-Save all datasets in the folder "data/". 
+ Store all unzip datasets in the folder "data/". 
 
 Reference
 ---------
