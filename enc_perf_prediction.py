@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import torch
-# import torch.nn as nn
+import torch.nn as nn
 from torch_geometric.data import Data, DataLoader
 
 from models import GNNpred
@@ -19,6 +19,7 @@ from utils import sample_random, sample_edit, sample_even
 
 import argparse
 parser = argparse.ArgumentParser(description='GNN PerformancePrediciton')
+parser.add_argument('--model', type=str, default='GNN-VSGAE')
 parser.add_argument('--prediction_task', choices=['interpolation', 'extrapolation'], default='interpolation', help='predicition in which areas')
 parser.add_argument('--save_interval', type=int, default=50, help='how many epochs to wait to save model')
 parser.add_argument('--sampling', type=str, default='random', help='randomly (even/edit) sampled NAS-Bench 101 Dataset')
@@ -101,7 +102,7 @@ def main(args):
 
 
     model = GNNpred(config['gnn_node_dimensions'], config['gnn_hidden_dimensions'], config['dim_target'],
-                    config['num_gnn_layers'], config['num_acc_layers'], config['num_node_atts'], config['beta'], 
+                    config['num_gnn_layers'], config['num_acc_layers'], config['num_node_atts'], 
                             model_config=config).to(device)
        
     if args.prediction_task=='interpolation':
@@ -133,7 +134,7 @@ def main(args):
     sampled_dataset = sample_func(ratio, torch.load(train_data))
     train_loader = DataLoader(sampled_dataset, batch_size=batch_size, shuffle=True)
 
-    logger.info('start training {}_{} with {}% ({} graphs) '.format(args.encoder_type, args.predictor, training_size, len(sampled_dataset)))
+    logger.info('start training {} with {}% ({} graphs) '.format(args.model, training_size, len(sampled_dataset)))
     
     # Save Sampled Dataset
     filepath = os.path.join(args.save, 'sampled_dataset_{}.pth'.format(training_size))
@@ -147,11 +148,11 @@ def main(args):
        
         # training
         train_obj, train_results=train(train_loader, model, criterion, optimizer, config['lr'], epoch, device, 
-                                       alpha, batch_size)
+                                       batch_size)
         logging.info('train metrics:  %s', train_results)
 
 #       validation    
-        valid_obj, valid_results = infer(val_loader, model, criterion, epoch, device, alpha, batch_size)
+        valid_obj, valid_results = infer(val_loader, model, criterion, epoch, device, batch_size)
         logging.info('validation metrics:  %s', valid_results)
         
         if args.prediction_task=='interpolation':
@@ -180,7 +181,7 @@ def main(args):
 
 
 
-def train(train_loader,model, criterion, optimizer, lr, epoch, device, alpha, batch_size):
+def train(train_loader,model, criterion, optimizer, lr, epoch, device, batch_size):
     objs = utils.AvgrageMeter()
     
     # TRAINING
@@ -210,7 +211,7 @@ def train(train_loader,model, criterion, optimizer, lr, epoch, device, alpha, ba
     return objs.avg, train_results
 
 
-def infer(val_loader, model, criterion, epoch, device, alpha, batch_size):
+def infer(val_loader, model, criterion, epoch, device, batch_size):
     objs = utils.AvgrageMeter()
 
     # VALIDATION
