@@ -24,8 +24,7 @@ To train the variational autoencoder for 90% of the dataset (vae_data.zip) for 3
 
    `python train_gae.py --test`
 
-
-Save all datasets in the folder "data/". 
+ Store all unzip datasets in the folder "data/". 
 
 Reference
 ---------
