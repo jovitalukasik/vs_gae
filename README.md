@@ -14,7 +14,7 @@ To train the encoder and the performance prediction for the whole trainings data
 
   `python enc_perf_prediction.py`
   
-To train the encoder and the performance prediction for 10% equidistant sampled run
+To train the encoder and the performance prediction for 10% equidistant sampled data run
 
    `python enc_perf_prediction.py --training_size 10 --sampling 'even'`
    
