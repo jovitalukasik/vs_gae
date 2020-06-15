@@ -1,3 +1,11 @@
+"""
+Code for testing the autoencoder from official repository of 
+"D-VAE: A Variational Autoencoder for Directed Acyclic Graphs", Advances in Neural Information Processing Systems 2019
+https://github.com/muhanzhang/D-VAE
+"""
+
+
+
 import logging
 logging.basicConfig(format="%(asctime)s %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
